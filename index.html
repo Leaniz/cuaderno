@@ -343,9 +343,24 @@ function armed(elm){
   setTimeout(()=>{ if(elm.isConnected && elm.dataset.armed==='1'){ elm.dataset.armed=''; elm.textContent=old; } }, 2600);
   return false;
 }
-async function wakeOn(){ try{ if('wakeLock' in navigator) RT.wl=await navigator.wakeLock.request('screen'); }catch(e){} }
-function wakeOff(){ try{ RT.wl&&RT.wl.release(); }catch(e){} RT.wl=null; }
+async function wakeOn(){
+  try{ if('wakeLock' in navigator){ RT.wl=await navigator.wakeLock.request('screen'); return; } }catch(e){}
+  if(!RT.noSleepV){
+    try{
+      const c=document.createElement('canvas'); c.width=c.height=1;
+      c.getContext('2d').fillRect(0,0,1,1);
+      RT.noSleepV=document.createElement('video');
+      RT.noSleepV.setAttribute('playsinline','');
+      RT.noSleepV.muted=true;
+      RT.noSleepV.style.cssText='position:fixed;width:1px;height:1px;opacity:0;pointer-events:none';
+      RT.noSleepV.srcObject=c.captureStream(0);
+      document.body.appendChild(RT.noSleepV);
+    }catch(e){ return; }
+  }
+  try{ await RT.noSleepV.play(); }catch(e){}
+}
 document.addEventListener('visibilitychange',()=>{ if(document.visibilityState==='visible') wakeOn(); });
+document.addEventListener('click',function firstWake(){ wakeOn(); document.removeEventListener('click',firstWake); },{once:true});
 wakeOn();
 
 /* ---------- radar ---------- */
@@ -1070,7 +1085,7 @@ document.addEventListener('change',ev=>{
 });
 
 /* ---------- service worker ---------- */
-const APP_VERSION='v4.3';
+const APP_VERSION='v4.4';
 let swWaiting=null;
 function updateApp(){
   if(swWaiting){ swWaiting.postMessage({type:'SKIP_WAITING'}); }
