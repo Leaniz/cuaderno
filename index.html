@@ -997,7 +997,19 @@ const acts={
     toast('Validando token…');
     const ok=await syncValidateToken(token);
     if(!ok){ toast('Token inválido — revisa permisos y fecha.'); return; }
+    toast('Buscando datos en la nube…');
     const sc={token};
+    try{
+      const gists=await ghApi('GET','/gists?per_page=100', token);
+      const existing=gists.find(g=>g.description==='Cuaderno — coffee brew log backup' && g.files[GIST_FILE]);
+      if(existing){
+        sc.gistId=existing.id;
+        saveSync(sc);
+        toast('Conectado a Gist existente.');
+        render();
+        return;
+      }
+    }catch(e){}
     saveSync(sc);
     await syncPush();
   },
