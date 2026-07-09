@@ -1085,14 +1085,14 @@ document.addEventListener('change',ev=>{
 });
 
 /* ---------- service worker ---------- */
-const APP_VERSION='v4.4';
+const APP_VERSION='v4.5';
 let swWaiting=null;
 function updateApp(){
   if(swWaiting){ swWaiting.postMessage({type:'SKIP_WAITING'}); }
   location.reload();
 }
 if('serviceWorker' in navigator){
-  navigator.serviceWorker.register('sw.js').then(reg=>{
+  navigator.serviceWorker.register('sw.js',{updateViaCache:'none'}).then(reg=>{
     reg.addEventListener('updatefound',()=>{
       const nw=reg.installing;
       nw.addEventListener('statechange',()=>{
