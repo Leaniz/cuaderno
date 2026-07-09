@@ -26,6 +26,10 @@ A personal coffee brew logger — guided pour timer, blind tasting radar, and cl
 2. In the app: Historial → Sincronización → paste token → Conectar
 3. Tap "Enviar a la nube" after each session
 
+## Deploy Status
+
+Every push to `main` auto-deploys via GitHub Pages. Check build progress at [Actions](https://github.com/Leaniz/cuaderno/actions).
+
 ## Tech
 
 Single HTML file, no build step, no dependencies. Vanilla JS, inline CSS, service worker for offline caching. Data lives in localStorage with optional Gist backup.
