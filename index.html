@@ -48,7 +48,7 @@
   *{box-sizing:border-box; -webkit-tap-highlight-color:transparent}
   html,body{margin:0; padding:0}
   body{background:var(--page); color:var(--ink); font-family:var(--sans); font-size:16px; line-height:1.45}
-  #app{max-width:520px; margin:0 auto; padding:14px 16px 96px}
+  #app{max-width:520px; margin:0 auto; padding:calc(14px + env(safe-area-inset-top)) 16px 96px}
   header.brand{display:flex; align-items:baseline; justify-content:space-between; padding:6px 2px 14px}
   header.brand .t{font-family:var(--serif); font-size:22px; letter-spacing:.01em}
   header.brand .s{font-size:11px; text-transform:uppercase; letter-spacing:.14em; color:var(--muted)}
@@ -1070,7 +1070,7 @@ document.addEventListener('change',ev=>{
 });
 
 /* ---------- service worker ---------- */
-const APP_VERSION='v4.2';
+const APP_VERSION='v4.3';
 let swWaiting=null;
 function updateApp(){
   if(swWaiting){ swWaiting.postMessage({type:'SKIP_WAITING'}); }
