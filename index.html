@@ -149,6 +149,10 @@
   .sync-dot.off{background:var(--muted)}
   .sync-status{font-size:12px; color:var(--muted); margin-top:6px}
   .token-field{font-family:monospace; font-size:14px; letter-spacing:.05em}
+  #updateBar{position:fixed; top:0; left:0; right:0; z-index:200; background:var(--accent); color:var(--accent-ink);
+    display:flex; align-items:center; justify-content:center; gap:12px; padding:12px 16px; font-size:14px; font-weight:600;
+    transform:translateY(-100%); transition:transform .3s}
+  #updateBar.show{transform:translateY(0)}
 </style>
 </head>
 <body>
@@ -162,6 +166,7 @@
 <nav id="tabs"></nav>
 <div id="flash" aria-hidden="true"></div>
 <div id="toast" role="status"></div>
+<div id="updateBar">Nueva versión disponible <button class="btn" style="min-height:36px;padding:6px 14px;font-size:13px" onclick="updateApp()">Actualizar</button></div>
 
 <script>
 'use strict';
@@ -782,6 +787,9 @@ function vSyncSection(){
     '<div class="row" style="margin-top:8px"><button class="btn grow" data-act="copyAll">Copiar todos los datos</button></div>'+
     '<label class="f">Pega aquí una copia para restaurar</label><textarea id="restorebox" rows="3" placeholder="Pega el JSON"></textarea>'+
     '<button class="btn block" data-act="restore" style="margin-top:6px">Restaurar (reemplaza los datos actuales)</button></details>';
+  h+='<div class="row" style="margin-top:16px;justify-content:space-between;align-items:center">'+
+    '<span class="muted">Cuaderno '+APP_VERSION+'</span>'+
+    '<button class="btn ghost" data-act="checkUpdate" style="font-size:13px">Buscar actualizaciones</button></div>';
   return h;
 }
 
@@ -1016,7 +1024,11 @@ const acts={
   async syncPush(){ await syncPush(); },
   async syncPull(d,elm){ if(!armed(elm)) return; await syncPull(); },
   syncDisconnect(d,elm){ if(!armed(elm)) return;
-    saveSync({}); toast('Nube desconectada.'); render(); }
+    saveSync({}); toast('Nube desconectada.'); render(); },
+  checkUpdate(){
+    if('serviceWorker' in navigator) navigator.serviceWorker.getRegistration().then(r=>{ if(r) r.update(); });
+    toast('Buscando…'); setTimeout(()=>{ if(!swWaiting) toast('Ya tienes la última versión.'); }, 2000);
+  }
 };
 
 /* ---------- delegación ---------- */
@@ -1058,8 +1070,25 @@ document.addEventListener('change',ev=>{
 });
 
 /* ---------- service worker ---------- */
+const APP_VERSION='v4.1';
+let swWaiting=null;
+function updateApp(){
+  if(swWaiting){ swWaiting.postMessage({type:'SKIP_WAITING'}); }
+  location.reload();
+}
 if('serviceWorker' in navigator){
-  navigator.serviceWorker.register('sw.js').catch(()=>{});
+  navigator.serviceWorker.register('sw.js').then(reg=>{
+    reg.addEventListener('updatefound',()=>{
+      const nw=reg.installing;
+      nw.addEventListener('statechange',()=>{
+        if(nw.state==='installed' && navigator.serviceWorker.controller){
+          swWaiting=nw;
+          document.getElementById('updateBar').classList.add('show');
+        }
+      });
+    });
+  }).catch(()=>{});
+  navigator.serviceWorker.addEventListener('controllerchange',()=>location.reload());
 }
 
 /* ---------- arranque ---------- */

@@ -1,4 +1,4 @@
-const CACHE = 'cuaderno-v2';
+const CACHE = 'cuaderno-v3';
 const ASSETS = ['./', './index.html', './manifest.json', './icon-192.png', './icon-512.png'];
 
 self.addEventListener('install', e => {
@@ -24,4 +24,8 @@ self.addEventListener('fetch', e => {
       return res;
     }))
   );
+});
+
+self.addEventListener('message', e => {
+  if (e.data && e.data.type === 'SKIP_WAITING') self.skipWaiting();
 });
