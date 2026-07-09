@@ -345,8 +345,8 @@ function armed(elm){
 }
 async function wakeOn(){ try{ if('wakeLock' in navigator) RT.wl=await navigator.wakeLock.request('screen'); }catch(e){} }
 function wakeOff(){ try{ RT.wl&&RT.wl.release(); }catch(e){} RT.wl=null; }
-document.addEventListener('visibilitychange',()=>{ const b=brew(ui.brewId);
-  if(document.visibilityState==='visible' && b && b.startedAt && !b.endedAt) wakeOn(); });
+document.addEventListener('visibilitychange',()=>{ if(document.visibilityState==='visible') wakeOn(); });
+wakeOn();
 
 /* ---------- radar ---------- */
 function radarSvg(series, opts){
@@ -950,9 +950,9 @@ const acts={
   wd(d){ const b=brew(ui.brewId); const done=b.events.filter(e=>e.actualT!=null); const e=done[+d.j]; if(!e) return;
     e.actualW=Math.max(0, Math.round(((e.actualW||0)+parseFloat(d.d))*10)/10); save(); render(); },
   dd(){ const b=brew(ui.brewId); b.drawdownT=elapsed(b); b.endedAt=Date.now();
-    stopInt(); wakeOff(); save(); ui.view='weights'; render(); },
+    stopInt(); save(); ui.view='weights'; render(); },
   endEarly(){ const b=brew(ui.brewId); b.endedAt=Date.now(); if(b.startedAt&&b.drawdownT==null) b.drawdownT=elapsed(b);
-    stopInt(); wakeOff(); save(); ui.view='weights'; render(); },
+    stopInt(); save(); ui.view='weights'; render(); },
   toTaste(){ const b=brew(ui.brewId); b.status='brewed';
     const lastW=b.events.filter(e=>e.actualW!=null).slice(-1)[0]; if(lastW) b.water=lastW.actualW;
     b.blind = scoredOf(b.beanId).filter(x=>x.id!==b.id).length>0 || !!(bean(b.beanId)||{}).bagNotes;
@@ -1070,7 +1070,7 @@ document.addEventListener('change',ev=>{
 });
 
 /* ---------- service worker ---------- */
-const APP_VERSION='v4.1';
+const APP_VERSION='v4.2';
 let swWaiting=null;
 function updateApp(){
   if(swWaiting){ swWaiting.postMessage({type:'SKIP_WAITING'}); }
