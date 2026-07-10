@@ -210,6 +210,15 @@ const RECIPES=[
   tip:'Igual que el estándar pero 1.ª vertida menor y 2.ª mayor (⅙ y luego hasta 40 %) → más dulzor, menos acidez.',
   make:(d,w)=>{ const c=[Math.round(w/6), Math.round(w*0.4), Math.round(w*0.6), Math.round(w*0.8), Math.round(w)];
     return [0,40,80,120,150].map((t,i)=>({label:'Vertida '+(i+1)+' de 5', targetW:c[i], startT:t, endT:t+10})); }},
+ {id:'winton', name:'Matt Winton — 5 vertidas iguales',
+  tip:'Molienda MEDIA (más gruesa que Hoffmann) · 93 °C, más fría (~88 °C) en las últimas · 5 vertidas iguales (20 %) agresivas y desde altura, del centro afuera y de vuelta · la señal es el lecho: vierte cuando casi deje de gotear, el reloj es orientativo.',
+  make:(d,w)=>[0,40,80,120,160].map((t,i)=>({label:'Vertida '+(i+1)+' de 5'+(i===0?' (bloom)':''), targetW:Math.round(w*0.2*(i+1)), startT:t, endT:t+10}))},
+ {id:'rao', name:'Scott Rao V60',
+  tip:'Molienda media-fina · ~96 °C · bloom 3× la dosis removiendo con cuchara para saturar TODO · un solo vertido continuo en círculos · «Rao spin» suave al final para nivelar el lecho · fin ~3:00.',
+  make:(d,w)=>[
+    {label:'Bloom + remueve con cuchara', targetW:Math.round(d*3), startT:0, endT:15},
+    {label:'Vierte continuo a 100 %', targetW:Math.round(w), startT:45, endT:90},
+    {label:'Remolino suave (Rao spin)', targetW:null, startT:95, endT:null}]},
  {id:'continua', name:'Una sola vertida (continua)',
   tip:'Bloom 3× dosis y una vertida lenta continua. Simple y repetible; menos palancas.',
   make:(d,w)=>[
@@ -1116,7 +1125,7 @@ document.addEventListener('change',ev=>{
 });
 
 /* ---------- service worker ---------- */
-const APP_VERSION='v4.6';
+const APP_VERSION='v4.7';
 let swWaiting=null;
 function updateApp(){
   if(swWaiting){ swWaiting.postMessage({type:'SKIP_WAITING'}); }
