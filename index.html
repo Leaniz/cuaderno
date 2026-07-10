@@ -189,12 +189,20 @@ const WHEEL={
 const EQUIP_TYPES=['Molinillo','Dripper / V60','Filtros','Prensa francesa','AeroPress','Hervidor','Báscula','Otro'];
 const RECIPES=[
  {id:'hoffmann', name:'Hoffmann V60 (definitiva)',
-  tip:'Molienda media-fina · 92–96 °C · remolino tras el bloom y al final · drawdown objetivo ~3:00–3:30.',
+  tip:'Molienda media-fina · 92–96 °C · tras el bloom es UN solo vertido continuo en 2 fases (rápido a 60 %, luego lento sin parar) · cucharada + remolino · drawdown objetivo ~3:00–3:30.',
   make:(d,w)=>[
     {label:'Bloom + remolino', targetW:Math.round(d*2), startT:0, endT:15},
-    {label:'Vierte a 60 %', targetW:Math.round(w*0.6), startT:45, endT:75},
-    {label:'Vierte a 100 %', targetW:Math.round(w), startT:75, endT:105},
+    {label:'Vierte continuo a 60 %', targetW:Math.round(w*0.6), startT:45, endT:75},
+    {label:'Sin parar, más lento, a 100 %', targetW:Math.round(w), startT:75, endT:105},
     {label:'Cucharada + remolino', targetW:null, startT:110, endT:null}]},
+ {id:'hoffmann1', name:'Hoffmann V60 — 1 taza (pulsos)',
+  tip:'Pensada para ~250 g · molienda media-fina · bloom 20 % del agua · 4 pulsos CON pausas (deja drenar) · remolino tras el bloom y al final · sin cuchara · fin ~3:00.',
+  make:(d,w)=>[
+    {label:'Bloom + remolino', targetW:Math.round(w*0.2), startT:0, endT:10},
+    {label:'Pulso a 40 %', targetW:Math.round(w*0.4), startT:45, endT:55},
+    {label:'Pulso a 60 %', targetW:Math.round(w*0.6), startT:70, endT:80},
+    {label:'Pulso a 80 %', targetW:Math.round(w*0.8), startT:90, endT:100},
+    {label:'Pulso a 100 % + remolino', targetW:Math.round(w), startT:110, endT:120}]},
  {id:'tetsu', name:'Tetsu Kasuya 4:6 (estándar)',
   tip:'Molienda GRUESA · 5 vertidas iguales (20 %) · vierte ~6 g/s · deja drenar entre vertidas · fin ~3:30.',
   make:(d,w)=>[0,40,80,120,150].map((t,i)=>({label:'Vertida '+(i+1)+' de 5', targetW:Math.round(w*0.2*(i+1)), startT:t, endT:t+10}))},
@@ -207,6 +215,12 @@ const RECIPES=[
   make:(d,w)=>[
     {label:'Bloom + remolino', targetW:Math.round(d*3), startT:0, endT:15},
     {label:'Vertida continua a 100 %', targetW:Math.round(w), startT:45, endT:105}]},
+ {id:'helado', name:'V60 helado (Hoffmann)',
+  tip:'Pon ~40 % del agua total como HIELO en el servidor y tara con él · molienda más fina · agua bien caliente · solo viertes el 60 % líquido · al final cucharada y remueve el servidor para fundir el hielo.',
+  make:(d,w)=>[
+    {label:'Bloom + agita con cuchara', targetW:Math.round(d*3), startT:0, endT:15},
+    {label:'Vierte lento y continuo (todo el agua caliente)', targetW:Math.round(w*0.6), startT:45, endT:105},
+    {label:'Cucharada + remueve el servidor', targetW:null, startT:150, endT:null}]},
  {id:'aeropress', name:'AeroPress (Hoffmann)',
   tip:'Molienda fina · sin bloom · sin invertir · no hundas el émbolo hasta 2:30.',
   make:(d,w)=>[
@@ -534,6 +548,22 @@ function vSetupExt(b){
 }
 
 function doneIdx(b){ return b.events.filter(e=>e.actualT!=null).length; }
+function planOverview(b){
+  let rows='';
+  b.events.forEach((e,i)=>{
+    rows+='<li><span class="t">'+fmt(e.startT)+(e.endT!=null?'–'+fmt(e.endT):'')+'</span>'+
+      '<span class="grow">'+esc(e.label)+'</span>'+
+      (e.targetW!=null?'<span class="muted" style="white-space:nowrap">hasta '+e.targetW+' g</span>':'')+'</li>';
+    const nx=b.events[i+1];
+    if(nx&&nx.startT!=null&&e.endT!=null){
+      const gap=nx.startT-e.endT;
+      if(gap>=5) rows+='<li><span class="t"></span><span class="grow muted">⏸ espera '+gap+' s — deja drenar</span></li>';
+      else if(e.targetW!=null&&nx.targetW!=null) rows+='<li><span class="t"></span><span class="grow muted">▾ sin pausa — sigue vertiendo, solo cambia el ritmo</span></li>';
+    }
+  });
+  return '<div class="nextcard" style="margin-top:14px"><span class="lbl">Receta completa — repásala antes de arrancar</span>'+
+    '<ul class="steps" style="margin-top:4px">'+rows+'</ul></div>';
+}
 function vLive(b){
   const i=doneIdx(b), cur=b.events[i], started=!!b.startedAt;
   let h='<div id="clock">0:00.0</div>';
@@ -543,7 +573,8 @@ function vLive(b){
       '<span class="grow"></span><span class="cd" id="cd"></span></div>'
       :'<span class="lbl">Pasos completados</span><div class="what">Esperando drawdown…</div>')+'</div>';
   if(!started){
-    h+='<button class="tapbtn" data-act="startT" style="margin-top:14px">ARRANCAR TEMPORIZADOR</button>';
+    h+='<button class="tapbtn" data-act="startT" style="margin-top:14px">ARRANCAR TEMPORIZADOR</button>'+
+       planOverview(b);
   } else if(cur){
     h+='<button class="tapbtn" data-act="tap" style="margin-top:14px">'+(cur.targetW!=null?'YA VERTÍ':'HECHO')+' — '+esc(cur.label).toUpperCase()+' ✓</button>'+
        '<div class="muted" style="text-align:center;margin-top:6px">Toca al <b>terminar</b> '+(cur.targetW!=null?'la vertida':'el paso')+', no al empezar. Si el lecho drena antes, vierte antes — el toque marca el final real.</div>';
@@ -1085,7 +1116,7 @@ document.addEventListener('change',ev=>{
 });
 
 /* ---------- service worker ---------- */
-const APP_VERSION='v4.5';
+const APP_VERSION='v4.6';
 let swWaiting=null;
 function updateApp(){
   if(swWaiting){ swWaiting.postMessage({type:'SKIP_WAITING'}); }
