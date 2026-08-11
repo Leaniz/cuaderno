@@ -1,7 +1,12 @@
 # Este repositorio es PÚBLICO (GitHub Pages desde main).
-# Nunca subas datos personales de la app. Las copias viven en
-# ../cuaderno-backups/ — fuera del repositorio.
-cuaderno-backup*.json
-*-copia.json
+# Nunca subas datos personales de la app.
+#
+# Las copias de seguridad van SOLO en backups/. La regla es la carpeta
+# entera, no el nombre del archivo: así da igual cómo llames al archivo.
+# No pongas datos de la app fuera de backups/.
+backups/
+
+# Red de seguridad por si un archivo de datos cae fuera de backups/
 *backup*.json
-data-backups/
+*-copia.json
+cuaderno-v1*.json
