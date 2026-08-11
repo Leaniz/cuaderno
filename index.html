@@ -129,6 +129,11 @@
   .xbtn{min-height:40px; border-radius:10px; background:transparent; color:var(--crit); font-size:18px; border:1px solid transparent}
   .beanline{display:flex; justify-content:space-between; align-items:center; gap:10px; padding:12px 2px; border-bottom:1px solid var(--line)}
   .beanline:last-child{border-bottom:none}
+  .wbar{height:6px; border-radius:999px; background:var(--line); overflow:hidden; margin:6px 0 3px; max-width:190px}
+  .wbar>i{display:block; height:100%; background:var(--accent); border-radius:999px}
+  .wbar.low>i{background:var(--crit)}
+  .chk{display:flex; align-items:center; gap:9px; margin-top:12px; font-size:14px}
+  .chk input{width:20px; height:20px; flex:none}
   .num{font-family:var(--serif); font-size:17px}
   .pill{font-size:11px; padding:3px 9px; border-radius:999px; border:1px solid var(--line); color:var(--muted); text-transform:uppercase; letter-spacing:.06em}
   .pill.scored{color:var(--accent); border-color:var(--accent)}
@@ -245,13 +250,27 @@ const RECIPES=[
 ];
 
 /* ---------- estado ---------- */
+const SCHEMA=2;
 let S=loadS();
 let ui={tab:'brew', view:null, brewId:null, histId:null, beanEdit:null, equipEdit:null, editDetail:false};
 let RT={int:null, curIdx:-1, c5:false, c0:false, ac:null, wl:null};
 
 function migrate(s){
   s.equip=s.equip||[];
-  (s.beans||[]).forEach(b=>{ if(b.notes==null) b.notes=''; });
+  (s.beans||[]).forEach(b=>{
+    if(b.notes==null) b.notes='';
+    /* esquema 2: origen y compra separados */
+    if(b.producer==null) b.producer='';
+    if(b.origin==null) b.origin='';
+    if(b.altitude==null) b.altitude='';
+    if(b.channel==null) b.channel='';
+    if(b.buyDate==null) b.buyDate='';
+    if(b.currency==null) b.currency='BOB';
+    if(b.price==null) b.price=null;
+    if(b.bagWeight==null) b.bagWeight=null;
+    if(b.adjustG==null) b.adjustG=0;
+    if(b.finished==null) b.finished=false;
+  });
   (s.brews||[]).forEach(b=>{
     if(!b.kind) b.kind='propia';
     if(b.ratio==null) b.ratio=(b.dose>0&&b.water>0)? Math.round(b.water/b.dose*100)/100 : 17;
@@ -261,11 +280,12 @@ function migrate(s){
     if(b.predictionReview==null) b.predictionReview='';
   });
   if(!s.updatedAt) s.updatedAt=new Date().toISOString();
+  s.schema=SCHEMA;
   return s;
 }
 function loadS(){
   try{ const r=localStorage.getItem(KEY); if(r) return migrate(JSON.parse(r)); }catch(e){}
-  return {beans:[], equip:[], brews:[], nextNum:1, updatedAt:new Date().toISOString()};
+  return {beans:[], equip:[], brews:[], nextNum:1, schema:SCHEMA, updatedAt:new Date().toISOString()};
 }
 function save(){ S.updatedAt=new Date().toISOString(); try{ localStorage.setItem(KEY, JSON.stringify(S)); }catch(e){} }
 const uid=()=>Math.random().toString(36).slice(2,10);
@@ -279,6 +299,14 @@ const parseT=str=>{ const m=/^(\d+):([0-5]?\d)$/.exec((str||'').trim()); return 
 const today=()=>new Date().toISOString().slice(0,10);
 const dpr=(roast,d)=>{ if(!roast) return null; return Math.round((new Date(d||today())-new Date(roast))/86400000); };
 const scoredOf=bid=>S.brews.filter(b=>b.beanId===bid && bid && b.status==='scored');
+/* --- gramos y coste por bolsa --- */
+const CURS={BOB:'Bs',USD:'$',EUR:'€'};
+const money=(n,cur)=>n==null?'–':(CURS[cur]||cur||'')+' '+(Math.round(n*100)/100).toFixed(2);
+const beanUsed=bid=>S.brews.reduce((n,b)=>n+((b.beanId===bid && b.kind!=='externa' && +b.dose>0)?+b.dose:0),0);
+const beanRemain=be=>(be && be.bagWeight>0)? Math.round((be.bagWeight-beanUsed(be.id)+(+be.adjustG||0))*10)/10 : null;
+const beanPerG=be=>(be && be.price>0 && be.bagWeight>0)? be.price/be.bagWeight : null;
+const brewCost=b=>{ const be=bean(b.beanId), g=beanPerG(be);
+  return (g!=null && +b.dose>0)? money(g*b.dose, be.currency) : null; };
 const winTxt=p=>(p.targetW!=null? p.targetW+' g ' : '')+'@ '+fmt(p.startT)+(p.endT!=null?'–'+fmt(p.endT):'');
 const fmtDate=iso=>{ if(!iso) return '–'; try{ const d=new Date(iso); return d.toLocaleDateString('es',{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'}); }catch(e){ return iso.slice(0,16); } };
 
@@ -508,8 +536,11 @@ function guia(){
   '</ul></details>';
 }
 function vSetup(b){
-  const beanOpts='<option value="">— elige —</option>'+S.beans.map(be=>'<option value="'+be.id+'" '+(b.beanId===be.id?'selected':'')+'>'+
-    esc(be.name)+(be.roastDate?' ('+dpr(be.roastDate,b.date)+' d post-tueste)':'')+'</option>').join('');
+  const beanOpts='<option value="">— elige —</option>'+S.beans.filter(be=>!be.finished||be.id===b.beanId)
+    .map(be=>{ const rem=beanRemain(be);
+      return '<option value="'+be.id+'" '+(b.beanId===be.id?'selected':'')+'>'+
+        esc(be.name)+(be.roastDate?' ('+dpr(be.roastDate,b.date)+' d)':'')+
+        (rem!=null?' · ~'+Math.max(0,rem)+' g':'')+'</option>'; }).join('');
   const recOpts=RECIPES.map((r,i)=>'<option value="'+i+'">'+esc(r.name)+'</option>').join('');
   return '<h2>Café <input type="number" inputmode="numeric" value="'+b.coffeeNum+'" data-bind="coffeeNum" data-num style="width:84px;display:inline-block;font-family:var(--serif);font-size:20px;padding:6px 8px"> — preparación</h2>'+
   '<div class="card">'+
@@ -542,7 +573,8 @@ function vSetup(b){
 }
 
 function vSetupExt(b){
-  const beanOpts='<option value="">(no está en mis granos)</option>'+S.beans.map(be=>'<option value="'+be.id+'" '+(b.beanId===be.id?'selected':'')+'>'+esc(be.name)+'</option>').join('');
+  const beanOpts='<option value="">(no está en mis granos)</option>'+S.beans.filter(be=>!be.finished||be.id===b.beanId)
+    .map(be=>'<option value="'+be.id+'" '+(b.beanId===be.id?'selected':'')+'>'+esc(be.name)+'</option>').join('');
   return '<h2>Cata externa</h2>'+
   '<div class="card">'+
     '<label class="f">¿Dónde / de quién?</label><input type="text" value="'+esc(b.lugar)+'" data-bind="lugar" placeholder="Cafetería X · drip bag de María · casa de…">'+
@@ -721,7 +753,8 @@ function vDetail(b, fresh){
       (b.events||[]).map(e=>'<tr><td>'+esc(e.label)+'</td><td class="muted">'+winTxt(e)+'</td>'+
         '<td>'+(e.actualW!=null?e.actualW.toFixed(1)+' g':'')+' @ '+fmt(e.actualT)+'</td></tr>').join('')+
       '</table><div class="small" style="margin-top:8px">'+esc(b.method)+' · molienda '+esc(b.grindSetting)+
-      ' · '+b.dose+' g : '+b.water+' g (1:'+(b.dose>0?(b.water/b.dose).toFixed(2):'–')+') · drawdown '+fmt(b.drawdownT)+
+      ' · '+b.dose+' g : '+b.water+' g (1:'+(b.dose>0?(b.water/b.dose).toFixed(2):'–')+')'+
+      (brewCost(b)?' · '+brewCost(b)+' de café':'')+' · drawdown '+fmt(b.drawdownT)+
       (b.temp?' · '+esc(b.temp)+' °C':'')+'<br>'+esc(b.waterProfile)+
       (gearNames.length?'<br><b>Equipo:</b> '+esc(gearNames.join(', ')):'')+'</div></div>';
   } else if(b.method || b.cafeTexto){
@@ -747,30 +780,84 @@ function vDetail(b, fresh){
   return h;
 }
 
+function wbar(be){
+  const rem=beanRemain(be); if(rem==null) return '';
+  const pct=Math.max(0,Math.min(100, rem/be.bagWeight*100)), low=rem<30;
+  return '<div class="wbar'+(low?' low':'')+'"><i style="width:'+pct.toFixed(0)+'%"></i></div>'+
+    '<div class="small"'+(low?' style="color:var(--crit)"':'')+'>quedan ~'+Math.max(0,rem)+' g de '+be.bagWeight+' g'+
+    (low?(rem<=0?' — vacía':' — casi vacía'):'')+'</div>';
+}
+function beanLine(be){
+  const n=S.brews.filter(x=>x.beanId===be.id).length, perG=beanPerG(be);
+  const meta=[be.roaster, be.producer, be.origin, be.altitude?be.altitude+' msnm':''].filter(Boolean).join(' · ');
+  const sub=[[be.variety,be.process].filter(Boolean).join(' · ')];
+  if(be.roastDate) sub.push('tostado '+be.roastDate+' ('+dpr(be.roastDate)+' d)');
+  sub.push(n===1?'1 preparación':n+' preparaciones');
+  if(perG!=null) sub.push(money(perG*100,be.currency)+'/100 g');
+  return '<div class="beanline"><div class="grow"><b>'+esc(be.name)+'</b>'+
+    (meta?'<div class="small">'+esc(meta)+'</div>':'')+
+    '<div class="small">'+esc(sub.filter(Boolean).join(' · '))+'</div>'+
+    (be.finished?'':wbar(be))+
+    (be.notes?'<div class="muted">'+esc(be.notes)+'</div>':'')+'</div>'+
+    '<button class="btn" data-act="beanEdit" data-id="'+be.id+'">Editar</button></div>';
+}
 function vBeans(){
   if(ui.beanEdit!==null){
     const be=ui.beanEdit;
+    const curOpts=['BOB','USD','EUR'].map(c=>'<option value="'+c+'" '+(be.currency===c?'selected':'')+'>'+CURS[c]+'</option>').join('');
+    const chans=S.beans.map(b=>b.channel).filter((v,i,a)=>v&&a.indexOf(v)===i);
+    const perG=beanPerG(be), used=be.id?beanUsed(be.id):0, est=beanRemain(be);
     return '<h2>'+(be.id?'Editar grano':'Nuevo grano')+'</h2><div class="card">'+
     '<label class="f">Nombre *</label><input type="text" value="'+esc(be.name)+'" data-bbind="name" placeholder="Typica Caturra Anaeróbico">'+
-    '<label class="f">Tostador / finca</label><input type="text" value="'+esc(be.roaster)+'" data-bbind="roaster" placeholder="4 Llamas, Caranavi">'+
+    '<label class="f">Tostador</label><input type="text" value="'+esc(be.roaster)+'" data-bbind="roaster" placeholder="4 Llamas">'+
+    '<label class="f">Productor / finca</label><input type="text" value="'+esc(be.producer)+'" data-bbind="producer" placeholder="Finca Waliki · Andrés Torrico">'+
+    '<div class="row"><div class="grow"><label class="f">Origen</label><input type="text" value="'+esc(be.origin)+'" data-bbind="origin" placeholder="Caranavi, Bolivia"></div>'+
+    '<div style="width:118px"><label class="f">Altitud msnm</label><input type="text" inputmode="numeric" value="'+esc(be.altitude)+'" data-bbind="altitude" placeholder="1500–1800"></div></div>'+
     '<div class="row"><div class="grow"><label class="f">Variedad</label><input type="text" value="'+esc(be.variety)+'" data-bbind="variety"></div>'+
     '<div class="grow"><label class="f">Proceso</label><input type="text" value="'+esc(be.process)+'" data-bbind="process" placeholder="lavado / honey / anaeróbico"></div></div>'+
     '<label class="f">Fecha de tueste</label><input type="date" value="'+esc(be.roastDate)+'" data-bbind="roastDate">'+
+    '</div>'+
+
+    '<h3>Compra</h3><div class="card">'+
+    '<div class="row"><div style="width:104px"><label class="f">Bolsa g</label><input type="number" inputmode="decimal" step="1" value="'+(be.bagWeight==null?'':be.bagWeight)+'" data-bbind="bagWeight" data-bnum placeholder="250"></div>'+
+    '<div class="grow"><label class="f">Precio</label><input type="number" inputmode="decimal" step="0.01" value="'+(be.price==null?'':be.price)+'" data-bbind="price" data-bnum></div>'+
+    '<div style="width:86px"><label class="f">Moneda</label><select data-bbind="currency">'+curOpts+'</select></div></div>'+
+    (perG!=null?'<div class="muted">'+money(perG*100,be.currency)+' por 100 g · '+money(perG*15,be.currency)+' por dosis de 15 g</div>':'')+
+    '<label class="f">Canal (dónde la compraste)</label><input type="text" list="chanlist" value="'+esc(be.channel)+'" data-bbind="channel" placeholder="Club del café · feria · tienda · regalo…">'+
+    '<datalist id="chanlist">'+chans.map(c=>'<option value="'+esc(c)+'">').join('')+'</datalist>'+
+    '<label class="f">Fecha de compra</label><input type="date" value="'+esc(be.buyDate)+'" data-bbind="buyDate">'+
+    '</div>'+
+
+    (be.id?'<h3>Restante</h3><div class="card">'+
+      (be.bagWeight>0
+        ? '<div class="small">Dosificado en preparaciones: <b>'+Math.round(used*10)/10+' g</b>'+
+          ((+be.adjustG)?' · corrección '+(be.adjustG>0?'+':'')+(Math.round(be.adjustG*10)/10)+' g':'')+'</div>'+
+          wbar(be)+
+          '<label class="f">Pesa la bolsa y corrige (g)</label>'+
+          '<input type="number" inputmode="decimal" step="1" value="'+(be._remainInput==null?'':be._remainInput)+'" data-bbind="_remainInput" data-bnum placeholder="'+est+'">'+
+          '<div class="muted">Escribe los gramos de café que quedan de verdad. Se guarda como corrección del estimado.</div>'
+        : '<div class="small">Pon el peso de la bolsa arriba para ver cuánto queda.</div>')+
+      '<label class="chk"><input type="checkbox" data-bbool="finished" '+(be.finished?'checked':'')+'> Bolsa terminada</label>'+
+      '<div class="muted">Una bolsa terminada se guarda pero desaparece de la lista y del selector de preparación.</div>'+
+    '</div>':'')+
+
+    '<h3>Notas</h3><div class="card">'+
     '<label class="f">Notas de la bolsa (se ocultan mientras catas)</label><textarea data-bbind="bagNotes" rows="2">'+esc(be.bagNotes)+'</textarea>'+
-    '<label class="f">Notas libres (compra, precio, historia, cómo evoluciona…)</label><textarea data-bbind="notes" rows="3">'+esc(be.notes)+'</textarea>'+
+    '<label class="f">Notas libres (historia, cómo evoluciona…)</label><textarea data-bbind="notes" rows="3">'+esc(be.notes)+'</textarea>'+
     '</div><div class="row" style="margin-top:12px"><button class="btn" data-act="beanCancel">Cancelar</button>'+
     (be.id?'<button class="btn danger" data-act="beanDel" data-id="'+be.id+'">Borrar</button>':'')+
     '<button class="btn primary grow" data-act="beanSave">Guardar grano</button></div>';
   }
   let h='<h2>Granos</h2><button class="btn primary block" data-act="beanNew">＋ Añadir grano</button>';
   if(!S.beans.length) h+='<div class="card small">Registra cada bolsa una vez — la fecha de tueste te da los días post-tueste automáticamente, y las notas de la bolsa quedan ocultas hasta después de catar.</div>';
-  else h+='<div class="card" style="padding:4px 14px">'+S.beans.slice().reverse().map(be=>{
-    const n=S.brews.filter(x=>x.beanId===be.id).length;
-    return '<div class="beanline"><div><b>'+esc(be.name)+'</b><div class="small">'+esc(be.roaster||'')+
-      (be.roastDate?' · tostado '+esc(be.roastDate)+' ('+dpr(be.roastDate)+' d)':'')+' · '+n+' preparación'+(n===1?'':'es')+'</div>'+
-      (be.notes?'<div class="muted">'+esc(be.notes)+'</div>':'')+'</div>'+
-      '<button class="btn" data-act="beanEdit" data-id="'+be.id+'">Editar</button></div>';
-  }).join('')+'</div>';
+  else {
+    const act=S.beans.filter(b=>!b.finished).slice().reverse();
+    const fin=S.beans.filter(b=>b.finished).slice().reverse();
+    if(act.length) h+='<div class="card" style="padding:4px 14px">'+act.map(beanLine).join('')+'</div>';
+    else h+='<div class="card small">Todas tus bolsas están marcadas como terminadas.</div>';
+    if(fin.length) h+='<details class="guia" style="margin-top:14px"><summary>Bolsas terminadas ('+fin.length+')</summary>'+
+      '<div class="card" style="padding:4px 14px;margin-top:8px">'+fin.map(beanLine).join('')+'</div></details>';
+  }
   return h;
 }
 
@@ -861,12 +948,15 @@ function mdFor(b){
     const gearNames=(b.gearIds||[]).map(id=>{const g=gear(id); return g?(g.type?g.type+': ':'')+g.name:null;}).filter(Boolean);
     L.push('## Registro — Café '+b.coffeeNum+' ('+b.date+') — app Cuaderno');
     L.push('');
-    L.push('**Grano**: '+(be.name||'¿?')+(be.roaster?' — '+be.roaster:'')+(be.variety?' · '+be.variety:'')+(be.process?' · '+be.process:''));
+    L.push('**Grano**: '+(be.name||'¿?')+(be.roaster?' — tostado por '+be.roaster:'')+(be.variety?' · '+be.variety:'')+(be.process?' · '+be.process:''));
+    const orig=[be.producer, be.origin, be.altitude?be.altitude+' msnm':''].filter(Boolean).join(' · ');
+    if(orig) L.push('**Origen**: '+orig);
     if(be.roastDate) L.push('**Tueste**: '+be.roastDate+' (~'+dpr(be.roastDate,b.date)+' días post-tueste)');
     L.push('**Método**: '+b.method+' · **Molienda**: '+b.grindSetting+(b.temp?' · **Temp**: '+b.temp+' °C':''));
     if(gearNames.length) L.push('**Equipo**: '+gearNames.join(' · '));
     L.push('**Agua**: '+b.waterProfile);
-    L.push('**Dosis**: '+b.dose+' g · **Agua**: '+b.water+' g · **Ratio**: 1:'+(b.dose>0?(b.water/b.dose).toFixed(2):'?'));
+    L.push('**Dosis**: '+b.dose+' g · **Agua**: '+b.water+' g · **Ratio**: 1:'+(b.dose>0?(b.water/b.dose).toFixed(2):'?')+
+      (brewCost(b)?' · **Coste del café**: '+brewCost(b):''));
     L.push('');
     if(b.prediction){ L.push('**Predicción (escrita antes de preparar, bloqueada)**: '+b.prediction);
       if(b.predictionReview) L.push('**Resultado de la predicción**: '+b.predictionReview);
@@ -949,8 +1039,10 @@ const acts={
   home(){ ui.tab='brew'; ui.view=null; ui.brewId=null; ui.editDetail=false; render(); },
   newBrew(){
     const last=S.brews.filter(x=>x.kind!=='externa').slice(-1)[0];
+    const lastBean=last?bean(last.beanId):null;
+    const openBeans=S.beans.filter(x=>!x.finished);
     const b={ id:uid(), kind:'propia', coffeeNum:S.nextNum, date:today(), status:'setup',
-      beanId:(last?last.beanId:(S.beans[0]&&S.beans[0].id))||'',
+      beanId:((lastBean&&!lastBean.finished)?lastBean.id:(openBeans[openBeans.length-1]||{}).id)||'',
       gearIds:last?last.gearIds.slice():[],
       method:last?last.method:'V60 (Hoffmann)', grindSetting:last?last.grindSetting:'15',
       waterProfile:last?last.waterProfile:'DIY Melbourne (~102 ppm TDS)',
@@ -1027,10 +1119,15 @@ const acts={
   saveDetail(){ ui.editDetail=false; save(); render(); window.scrollTo(0,0); },
   delBrew(d,elm){ if(!armed(elm)) return;
     S.brews=S.brews.filter(x=>x.id!==d.id); save(); ui.histId=null; render(); toast('Registro borrado'); },
-  beanNew(){ ui.beanEdit={id:null,name:'',roaster:'',variety:'',process:'',roastDate:'',bagNotes:'',notes:''}; render(); },
+  beanNew(){ ui.beanEdit={id:null,name:'',roaster:'',producer:'',origin:'',altitude:'',variety:'',process:'',roastDate:'',
+    bagWeight:null,price:null,currency:'BOB',channel:'',buyDate:'',adjustG:0,finished:false,bagNotes:'',notes:''}; render(); },
   beanEdit(d){ ui.beanEdit=JSON.parse(JSON.stringify(bean(d.id))); render(); },
   beanCancel(){ ui.beanEdit=null; render(); },
   beanSave(){ const e=ui.beanEdit; if(!e.name||!e.name.trim()){ toast('Ponle un nombre al grano.'); return; }
+    /* el peso real que teclea el usuario se guarda como corrección del estimado */
+    if(e._remainInput!=null && e.id && e.bagWeight>0)
+      e.adjustG=Math.round((e._remainInput-(e.bagWeight-beanUsed(e.id)))*10)/10;
+    delete e._remainInput;
     if(e.id){ const i=S.beans.findIndex(b=>b.id===e.id); S.beans[i]=e; }
     else { e.id=uid(); S.beans.push(e); }
     save(); ui.beanEdit=null; render(); },
@@ -1099,7 +1196,11 @@ function setPath(obj, path, val){
 const r1=x=>Math.round(x*10)/10, r2=x=>Math.round(x*100)/100;
 document.addEventListener('input',ev=>{
   const t=ev.target;
-  if(t.dataset.bbind && ui.beanEdit){ ui.beanEdit[t.dataset.bbind]=t.value; return; }
+  if(t.dataset.bbool && ui.beanEdit){ ui.beanEdit[t.dataset.bbool]=t.checked; return; }
+  if(t.dataset.bbind && ui.beanEdit){
+    let v=t.value;
+    if('bnum' in t.dataset){ v=parseFloat(v); if(isNaN(v)) v=null; }
+    ui.beanEdit[t.dataset.bbind]=v; return; }
   if(t.dataset.ebind && ui.equipEdit){ ui.equipEdit[t.dataset.ebind]=t.value; return; }
   if(!t.dataset.bind) return;
   const b=brew(ui.brewId||ui.histId); if(!b) return;
@@ -1121,11 +1222,12 @@ document.addEventListener('change',ev=>{
     setPath(b, t.dataset.bindtime, parseT(t.value)); save(); return; }
   if(t.id==='recipeSel'){ const dsc=document.getElementById('recipeDesc');
     if(dsc) dsc.textContent=RECIPES[+t.value].tip; return; }
+  if(t.dataset.bbool && ui.beanEdit){ ui.beanEdit[t.dataset.bbool]=t.checked; return; }
   if(t.dataset.bind==='beanId'){ render(); }
 });
 
 /* ---------- service worker ---------- */
-const APP_VERSION='v4.7';
+const APP_VERSION='v5.0';
 let swWaiting=null;
 function updateApp(){
   if(swWaiting){ swWaiting.postMessage({type:'SKIP_WAITING'}); }
