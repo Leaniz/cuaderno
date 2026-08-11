@@ -181,6 +181,15 @@ const SYNC_KEY='cuaderno-sync';
 const GIST_FILE='cuaderno-backup.json';
 const AXES=[['sweet','Dulzor'],['body','Cuerpo'],['salt','Sal'],['flavour','Sabor'],
             ['acidity','Acidez'],['aftertaste','Retrogusto'],['bitter','Amargor'],['aroma','Aroma']];
+/* descriptores en orden sensorial: en seco → vista → nariz → boca.
+   [clave, etiqueta larga, etiqueta corta, pista] */
+const DESCS=[
+ ['fragrance','1 · Fragancia (café molido, en seco)','Fragancia','Huele la molienda antes de mojarla'],
+ ['colour',   '2 · Color',                           'Color',    'Color de la cama y de la taza'],
+ ['aroma',    '3 · Aroma (la taza, en húmedo)',      'Aroma',    'Huele la taza recién hecha'],
+ ['body',     '4 · Cuerpo / textura',                'Cuerpo',   'Ligero, jugoso, sedoso, seco…'],
+ ['taste',    '5 · Sabor',                           'Sabor',    'A qué sabe, y cómo cambia al enfriarse']];
+const descDefaults=()=>{ const o={}; DESCS.forEach(d=>o[d[0]]=''); return o; };
 const WHEEL={
   'Frutal':['mora','arándano','fresa','cítrico','naranja','limón','fruta de hueso','ciruela','tropical','fruta pasa','manzana','uva'],
   'Floral':['floral','jazmín','rosa','manzanilla','té negro'],
@@ -250,7 +259,7 @@ const RECIPES=[
 ];
 
 /* ---------- estado ---------- */
-const SCHEMA=2;
+const SCHEMA=3;
 let S=loadS();
 let ui={tab:'brew', view:null, brewId:null, histId:null, beanEdit:null, equipEdit:null, editDetail:false};
 let RT={int:null, curIdx:-1, c5:false, c0:false, ac:null, wl:null};
@@ -278,6 +287,9 @@ function migrate(s){
     (b.plan||[]).forEach(p=>{ if(p.startT==null && p.targetT!=null){ p.startT=p.targetT; p.endT=null; } });
     (b.events||[]).forEach(p=>{ if(p.startT==null && p.targetT!=null){ p.startT=p.targetT; p.endT=null; } });
     if(b.predictionReview==null) b.predictionReview='';
+    /* esquema 3: la fragancia (café en seco) se separa del aroma en húmedo.
+       El texto viejo, que mezclaba los dos, se queda en aroma. */
+    if(b.desc) DESCS.forEach(d=>{ if(b.desc[d[0]]==null) b.desc[d[0]]=''; });
   });
   if(!s.updatedAt) s.updatedAt=new Date().toISOString();
   s.schema=SCHEMA;
@@ -661,20 +673,21 @@ function vWeights(b){
 function vTaste(b){
   const prev=scoredOf(b.beanId).filter(x=>x.id!==b.id);
   const be=bean(b.beanId);
-  b.scores=b.scores||{}; b.desc=b.desc||{aroma:'',body:'',taste:'',colour:''}; b.wheel=b.wheel||[];
+  b.scores=b.scores||{}; b.desc=Object.assign(descDefaults(), b.desc||{}); b.wheel=b.wheel||[];
   let h='<h2>'+brewTitle(b)+' — cátalo</h2>';
   const hiders=[];
   if(prev.length) hiders.push(prev.length+' radar'+(prev.length>1?'es':'')+' previo'+(prev.length>1?'s':'')+' de este grano');
   if(be && be.bagNotes) hiders.push('las notas de la bolsa');
   if(hiders.length) h+='<div class="blind">🙈 Cata a ciegas — '+hiders.join(' y ')+' quedan ocultos hasta guardar. Primero tu lectura.</div>';
-  h+='<div class="card"><div id="radarwrap">'+radarSvg([{values:b.scores, color:'var(--cur)'}],{id:'radarIn'})+'</div>'+
+  h+='<h3>Tus palabras primero — en orden</h3><div class="card">';
+  DESCS.forEach(d=>{
+    h+='<label class="f">'+d[1]+'</label><textarea data-bind="desc.'+d[0]+'" rows="2" placeholder="'+esc(d[3])+'">'+esc(b.desc[d[0]])+'</textarea>';
+  });
+  h+='<div class="muted">Un paso cada vez: en seco, a la vista, en nariz, en boca. Escribe antes de puntuar.</div></div>';
+  h+='<h3>Araña — pon los números</h3>'+
+     '<div class="card"><div id="radarwrap">'+radarSvg([{values:b.scores, color:'var(--cur)'}],{id:'radarIn'})+'</div>'+
      '<div class="muted" style="text-align:center">Toca un eje a la altura del anillo · pasos de 0,1 · centro = 0</div>'+
      '<div class="vals" id="valchips">'+valChips(b.scores)+'</div></div>';
-  h+='<h3>Tus palabras primero — descriptores</h3><div class="card">';
-  [['aroma','Aroma (seco + húmedo)'],['body','Cuerpo / textura'],['taste','Sabor'],['colour','Color']].forEach(d=>{
-    h+='<label class="f">'+d[1]+'</label><textarea data-bind="desc.'+d[0]+'" rows="2">'+esc(b.desc[d[0]])+'</textarea>';
-  });
-  h+='</div>';
   h+='<h3>Vocabulario estándar (opcional, después de tus palabras)</h3>'+
      '<div class="card" id="wheelcard">'+wheelChips(b)+'</div>';
   h+='<h3>Notas</h3><div class="card"><textarea data-bind="notes" rows="3" placeholder="Lo demás — fallos de proceso, estado del paladar, hipótesis…">'+esc(b.notes)+'</textarea></div>';
@@ -702,8 +715,17 @@ function afterTaste(b){
   bindRadarInput('radarIn', b.scores, rerender);
 }
 
+function detailBeanOpts(b){
+  return '<option value="">'+(b.kind==='externa'?'(no está en mis granos)':'— elige —')+'</option>'+
+    S.beans.filter(x=>!x.finished||x.id===b.beanId)
+      .map(x=>'<option value="'+x.id+'" '+(b.beanId===x.id?'selected':'')+'>'+esc(x.name)+
+        (x.finished?' (terminada)':'')+'</option>').join('');
+}
 function vDetail(b, fresh){
   const be=bean(b.beanId);
+  const ed=fresh||ui.editDetail;
+  /* los parámetros solo se editan a petición, no en la pantalla de recién guardado */
+  const edP=ui.editDetail;
   const prev=scoredOf(b.beanId).filter(x=>x.id!==b.id && S.brews.indexOf(x)<S.brews.indexOf(b)).slice(-2);
   const series=[{values:b.scores||{}, color:'var(--cur)', name:brewTitle(b)}];
   prev.slice().reverse().forEach((p,k)=>series.push({values:p.scores||{}, color:k===0?'var(--prev1)':'var(--prev2)', name:brewTitle(p)}));
@@ -721,7 +743,6 @@ function vDetail(b, fresh){
         return '<div class="d">'+ax[1]+'<b>'+(d==null?'–':(d>0?'+':'')+d.toFixed(1).replace('.',','))+'</b></div>'; }).join('')+'</div>';
     }
     h+='</div>';
-    const ed=fresh||ui.editDetail;
     if(b.prediction){ h+='<h3>Predicción</h3><div class="card"><div class="small"><b>Antes de preparar:</b> '+esc(b.prediction)+'</div>';
       if(ed) h+='<label class="f" style="margin-top:8px">¿Se cumplió?</label><textarea data-bind="predictionReview" rows="2" placeholder="Evalúa tu predicción…">'+esc(b.predictionReview||'')+'</textarea>';
       else if(b.predictionReview) h+='<div class="small" style="margin-top:6px"><b>Resultado:</b> '+esc(b.predictionReview)+'</div>';
@@ -733,13 +754,13 @@ function vDetail(b, fresh){
     if(be && be.bagNotes) h+='<h3>La bolsa dice</h3><div class="card small">'+esc(be.bagNotes)+'</div>';
     if(ed){
       h+='<h3>Descriptores</h3><div class="card">';
-      [['aroma','Aroma'],['body','Cuerpo'],['taste','Sabor'],['colour','Color']].forEach(d=>{
-        h+='<label class="f">'+d[1]+'</label><textarea data-bind="desc.'+d[0]+'" rows="1">'+esc((b.desc||{})[d[0]]||'')+'</textarea>';
+      DESCS.forEach(d=>{
+        h+='<label class="f">'+d[1]+'</label><textarea data-bind="desc.'+d[0]+'" rows="1" placeholder="'+esc(d[3])+'">'+esc((b.desc||{})[d[0]]||'')+'</textarea>';
       });
       h+='</div><h3>Rueda de sabores</h3><div class="card" id="wheelcard">'+wheelChips(b)+'</div>';
     } else {
-      const dd=[['aroma','Aroma'],['body','Cuerpo'],['taste','Sabor'],['colour','Color']]
-        .filter(d=>(b.desc||{})[d[0]]).map(d=>'<div class="small"><b>'+d[1]+':</b> '+esc(b.desc[d[0]])+'</div>').join('');
+      const dd=DESCS
+        .filter(d=>(b.desc||{})[d[0]]).map(d=>'<div class="small"><b>'+d[2]+':</b> '+esc(b.desc[d[0]])+'</div>').join('');
       if(dd) h+='<h3>Descriptores</h3><div class="card">'+dd+
         ((b.wheel||[]).length?'<div class="small" style="margin-top:6px"><b>Rueda:</b> '+b.wheel.join(', ')+'</div>':'')+'</div>';
     }
@@ -747,7 +768,52 @@ function vDetail(b, fresh){
   } else {
     h+='<div class="card small">Aún sin catar.</div><button class="btn primary block" data-act="resume" data-id="'+b.id+'">Continuar</button>';
   }
-  if(b.kind!=='externa'){
+  if(b.kind!=='externa' && edP){
+    h+='<h3>Parámetros</h3><div class="card">'+
+      '<div class="row"><div class="grow"><label class="f">Fecha</label>'+
+        '<input type="date" value="'+esc(b.date)+'" data-bind="date"></div>'+
+      '<div style="width:112px"><label class="f">Temp °C</label>'+
+        '<input type="text" inputmode="decimal" value="'+esc(b.temp)+'" data-bind="temp" placeholder="opc."></div></div>'+
+      '<label class="f">Grano</label><select data-bind="beanId">'+detailBeanOpts(b)+'</select>'+
+      '<label class="f">Equipo usado (toca para marcar)</label>'+gearChips(b)+
+      '<div class="row"><div class="grow"><label class="f">Método</label>'+
+        '<input type="text" value="'+esc(b.method)+'" data-bind="method"></div>'+
+      '<div style="width:120px"><label class="f">Ajuste molienda</label>'+
+        '<input type="text" inputmode="decimal" value="'+esc(b.grindSetting)+'" data-bind="grindSetting"></div></div>'+
+      '<label class="f">Agua (perfil)</label>'+
+        '<input type="text" value="'+esc(b.waterProfile)+'" data-bind="waterProfile">'+
+      '<div class="row"><div class="grow"><label class="f">Dosis g</label>'+
+        '<input id="inpDose" type="number" inputmode="decimal" step="0.1" value="'+b.dose+'" data-bind="dose" data-num></div>'+
+      '<div class="grow"><label class="f">Ratio 1:</label>'+
+        '<input id="inpRatio" type="number" inputmode="decimal" step="0.1" value="'+b.ratio+'" data-bind="ratio" data-num></div>'+
+      '<div class="grow"><label class="f">Agua g</label>'+
+        '<input id="inpWater" type="number" inputmode="decimal" step="1" value="'+b.water+'" data-bind="water" data-num></div></div>'+
+      '<div class="muted">Dosis, ratio y agua siguen enlazados. Si cambias la dosis, cambia el café que queda en la bolsa.</div>'+
+    '</div>';
+    h+='<h3>Registro de vertidas</h3><div class="card">'+
+      '<table class="pt"><tr><th>Paso</th><th>Plan</th><th>t real</th><th>g real</th></tr>'+
+      (b.events||[]).map((e,j)=>'<tr><td>'+esc(e.label)+'</td><td class="muted">'+winTxt(e)+'</td>'+
+        '<td><input type="text" value="'+(e.actualT!=null?fmt(e.actualT):'')+'" data-bindtime="events.'+j+'.actualT" style="width:66px;padding:8px"></td>'+
+        '<td><input type="number" inputmode="decimal" step="0.1" value="'+(e.actualW!=null?e.actualW:'')+'" data-bind="events.'+j+'.actualW" data-num style="width:76px;padding:8px"></td></tr>').join('')+
+      '</table>'+
+      '<div class="row" style="margin-top:10px"><div class="grow"><label class="f">Fin de drawdown</label>'+
+        '<input type="text" value="'+(b.drawdownT!=null?fmt(b.drawdownT):'')+'" data-bindtime="drawdownT" placeholder="m:ss"></div>'+
+      '<div class="grow"></div></div>'+
+      '<div class="muted">Los tiempos van en m:ss. El plan no se toca.</div>'+
+    '</div>';
+  } else if(b.kind==='externa' && edP){
+    h+='<h3>Parámetros</h3><div class="card">'+
+      '<div class="row"><div class="grow"><label class="f">¿Dónde / de quién?</label>'+
+        '<input type="text" value="'+esc(b.lugar)+'" data-bind="lugar"></div>'+
+      '<div style="width:150px"><label class="f">Fecha</label>'+
+        '<input type="date" value="'+esc(b.date)+'" data-bind="date"></div></div>'+
+      '<label class="f">Café (lo que sepas)</label>'+
+        '<input type="text" value="'+esc(b.cafeTexto)+'" data-bind="cafeTexto">'+
+      '<label class="f">O elige de mis granos</label><select data-bind="beanId">'+detailBeanOpts(b)+'</select>'+
+      '<label class="f">Método (si se sabe)</label>'+
+        '<input type="text" value="'+esc(b.method)+'" data-bind="method">'+
+    '</div>';
+  } else if(b.kind!=='externa'){
     const gearNames=(b.gearIds||[]).map(id=>{const g=gear(id); return g?g.name:null;}).filter(Boolean);
     h+='<h3>Registro de preparación</h3><div class="card"><table class="pt"><tr><th>Paso</th><th>Plan</th><th>Real</th></tr>'+
       (b.events||[]).map(e=>'<tr><td>'+esc(e.label)+'</td><td class="muted">'+winTxt(e)+'</td>'+
@@ -761,7 +827,7 @@ function vDetail(b, fresh){
     h+='<div class="card small"><b>Método:</b> '+esc(b.method||'¿?')+(b.cafeTexto?' · <b>Café:</b> '+esc(b.cafeTexto):'')+'</div>';
   }
   if(b.status==='scored'){
-    if(!fresh && !ui.editDetail) h+='<button class="btn block" data-act="editDetail" style="margin-top:12px">Editar notas y descriptores</button>';
+    if(!fresh && !ui.editDetail) h+='<button class="btn block" data-act="editDetail" style="margin-top:12px">Editar esta preparación</button>';
     if(ui.editDetail) h+='<button class="btn primary block" data-act="saveDetail" style="margin-top:12px">Listo</button>';
     h+='<div class="row" style="margin-top:12px"><button class="btn primary grow" data-act="copyMd" data-id="'+b.id+'">📋 Copiar para Claude</button>'+
        (navigator.share?'<button class="btn" data-act="shareMd" data-id="'+b.id+'">Compartir</button>':'')+'</div>'+
@@ -974,7 +1040,8 @@ function mdFor(b){
   L.push('**Radar (0–1, pasos de 0,1'+(b.blind?', catado a ciegas — radares previos y notas de la bolsa ocultos hasta guardar':'')+')**: '+
     AXES.map(ax=>ax[1].toLowerCase()+' '+((b.scores||{})[ax[0]]!=null?b.scores[ax[0]].toFixed(1):'–')).join(', '));
   const d=b.desc||{};
-  L.push('**Descriptores (palabras propias primero)** — aroma: '+(d.aroma||'—')+' · cuerpo: '+(d.body||'—')+' · sabor: '+(d.taste||'—')+' · color: '+(d.colour||'—'));
+  L.push('**Descriptores (palabras propias primero, en orden sensorial)** — '+
+    DESCS.map(x=>x[2].toLowerCase()+': '+(d[x[0]]||'—')).join(' · '));
   if((b.wheel||[]).length) L.push('**Rueda de sabores (elegidos después)**: '+b.wheel.join(', '));
   if(b.notes) L.push('**Notas**: '+b.notes);
   if(be.notes) L.push('**Notas del grano**: '+be.notes);
@@ -1068,7 +1135,7 @@ const acts={
     const dsc=document.getElementById('recipeDesc'); if(dsc) dsc.textContent=r.tip; },
   addStep(){ const b=brew(ui.brewId); b.plan.push({label:'Vertida', targetW:null, startT:null, endT:null}); save(); render(); },
   delStep(d){ const b=brew(ui.brewId); b.plan.splice(+d.i,1); save(); render(); },
-  gearTog(d){ const b=brew(ui.brewId); const k=b.gearIds.indexOf(d.id);
+  gearTog(d){ const b=brew(ui.brewId||ui.histId); const k=b.gearIds.indexOf(d.id);
     if(k>=0) b.gearIds.splice(k,1); else b.gearIds.push(d.id); save(); render(); },
   resume(d){ const b=brew(d.id); ui.tab='brew'; ui.brewId=b.id;
     ui.view= b.status==='setup'?(b.kind==='externa'?'setupExt':'setup')
@@ -1227,7 +1294,7 @@ document.addEventListener('change',ev=>{
 });
 
 /* ---------- service worker ---------- */
-const APP_VERSION='v5.0';
+const APP_VERSION='v5.1';
 let swWaiting=null;
 function updateApp(){
   if(swWaiting){ swWaiting.postMessage({type:'SKIP_WAITING'}); }
