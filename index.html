@@ -61,7 +61,7 @@
   .muted{color:var(--muted); font-size:13px}
   .small{font-size:13px; color:var(--ink2)}
   label.f{display:block; font-size:12px; text-transform:uppercase; letter-spacing:.08em; color:var(--muted); margin:10px 0 4px}
-  input[type=text],input[type=number],input[type=date],input[type=password],textarea,select{
+  input[type=text],input[type=number],input[type=date],input[type=password],input[type=search],textarea,select{
     width:100%; padding:11px 12px; border:1px solid var(--line); border-radius:10px;
     background:var(--surface); color:var(--ink); font-size:16px; font-family:var(--sans)}
   textarea{min-height:64px; resize:vertical}
@@ -143,6 +143,8 @@
   details.guia li{margin-bottom:5px}
   svg text{font-family:var(--sans)}
   .footer-note{text-align:center; font-size:12px; color:var(--muted); margin-top:22px}
+  .histmes{font-family:var(--serif); font-size:13px; color:var(--muted); text-transform:uppercase;
+    letter-spacing:.08em; margin:18px 0 6px}
   #toast{position:fixed; left:50%; bottom:calc(84px + env(safe-area-inset-bottom)); transform:translateX(-50%);
     background:var(--ink); color:var(--page); padding:10px 18px; border-radius:999px; font-size:14px;
     font-weight:600; opacity:0; pointer-events:none; transition:opacity .25s; z-index:100; max-width:88%; text-align:center}
@@ -190,6 +192,9 @@ const DESCS=[
  ['body',     '4 · Cuerpo / textura',                'Cuerpo',   'Ligero, jugoso, sedoso, seco…'],
  ['taste',    '5 · Sabor',                           'Sabor',    'A qué sabe, y cómo cambia al enfriarse']];
 const descDefaults=()=>{ const o={}; DESCS.forEach(d=>o[d[0]]=''); return o; };
+const hasScores=b=>!!(b.scores && AXES.some(ax=>b.scores[ax[0]]!=null));
+/* Rápida = cerrada sin nada de cata: ni araña, ni descriptores, ni rueda. */
+const looksQuick=b=>!hasScores(b) && !DESCS.some(x=>(b.desc||{})[x[0]]) && !(b.wheel||[]).length;
 const WHEEL={
   'Frutal':['mora','arándano','fresa','cítrico','naranja','limón','fruta de hueso','ciruela','tropical','fruta pasa','manzana','uva'],
   'Floral':['floral','jazmín','rosa','manzanilla','té negro'],
@@ -259,9 +264,10 @@ const RECIPES=[
 ];
 
 /* ---------- estado ---------- */
-const SCHEMA=3;
+const SCHEMA=4;
 let S=loadS();
-let ui={tab:'brew', view:null, brewId:null, histId:null, beanEdit:null, equipEdit:null, editDetail:false};
+let ui={tab:'brew', view:null, brewId:null, histId:null, beanEdit:null, equipEdit:null, editDetail:false,
+        histQ:'', histN:20, syncing:false, syncErr:''};
 let RT={int:null, curIdx:-1, c5:false, c0:false, ac:null, wl:null};
 
 function migrate(s){
@@ -290,6 +296,9 @@ function migrate(s){
     /* esquema 3: la fragancia (café en seco) se separa del aroma en húmedo.
        El texto viejo, que mezclaba los dos, se queda en aroma. */
     if(b.desc) DESCS.forEach(d=>{ if(b.desc[d[0]]==null) b.desc[d[0]]=''; });
+    /* esquema 4: preparación rápida. Las viejas que se cerraron con la cata
+       en blanco ya eran rápidas de hecho, así que se marcan como tales. */
+    if(b.quick==null) b.quick = b.status==='scored' && looksQuick(b);
   });
   if(!s.updatedAt) s.updatedAt=new Date().toISOString();
   s.schema=SCHEMA;
@@ -310,7 +319,11 @@ const fmtd=t=>{ const m=Math.floor(t/60), s=t-m*60; return m+':'+ (s<10?'0':'') 
 const parseT=str=>{ const m=/^(\d+):([0-5]?\d)$/.exec((str||'').trim()); return m? (+m[1])*60+(+m[2]) : null; };
 const today=()=>new Date().toISOString().slice(0,10);
 const dpr=(roast,d)=>{ if(!roast) return null; return Math.round((new Date(d||today())-new Date(roast))/86400000); };
-const scoredOf=bid=>S.brews.filter(b=>b.beanId===bid && bid && b.status==='scored');
+const isQuick=b=>b.status==='scored' && !!b.quick;
+const scoredOf=bid=>S.brews.filter(b=>b.beanId===bid && bid && b.status==='scored' && hasScores(b));
+const norm=s=>String(s==null?'':s).normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase();
+const MESES=['enero','febrero','marzo','abril','mayo','junio','julio','agosto','septiembre','octubre','noviembre','diciembre'];
+const HIST_PAGE=20;
 /* --- gramos y coste por bolsa --- */
 const CURS={BOB:'Bs',USD:'$',EUR:'€'};
 const money=(n,cur)=>n==null?'–':(CURS[cur]||cur||'')+' '+(Math.round(n*100)/100).toFixed(2);
@@ -337,9 +350,10 @@ async function ghApi(method, path, token, body){
   return res.json();
 }
 
-async function syncPush(){
+async function syncPush(auto){
   const sc=loadSync();
-  if(!sc.token){ toast('Configura el token primero.'); return; }
+  if(!sc.token){ if(!auto) toast('Configura el token primero.'); return false; }
+  ui.syncing=true; ui.syncErr=''; if(auto) render();
   try{
     const payload={files:{}};
     payload.files[GIST_FILE]={content:JSON.stringify(S, null, 2)};
@@ -352,12 +366,24 @@ async function syncPush(){
     }
     sc.lastPush=new Date().toISOString();
     saveSync(sc);
-    toast('Datos sincronizados con la nube.');
+    ui.syncing=false; ui.syncErr='';
+    toast(auto?'Guardado y sincronizado ✓':'Datos sincronizados con la nube.');
     render();
+    return true;
   } catch(e){
-    toast('Error: '+e.message);
-    if(e.message.includes('inválido')){ sc.token=''; saveSync(sc); render(); }
+    ui.syncing=false; ui.syncErr=e.message;
+    toast(auto? 'Guardado en el teléfono. La nube falló: '+e.message : 'Error: '+e.message);
+    if(e.message.includes('inválido')){ sc.token=''; saveSync(sc); }
+    render();
+    return false;
   }
+}
+
+/* Envío automático al guardar. Si no hay nube configurada no hace nada. */
+function autoPush(){
+  const sc=loadSync();
+  if(!sc.token){ ui.syncErr=''; return; }
+  syncPush(true);
 }
 
 async function syncPull(){
@@ -485,6 +511,7 @@ function render(){
   if(ui.view==='live')    { m.innerHTML=vLive(b); tickDom(); return; }
   if(ui.view==='weights') { m.innerHTML=vWeights(b); return; }
   if(ui.view==='taste')   { m.innerHTML=vTaste(b); afterTaste(b); return; }
+  if(ui.view==='quick')   { m.innerHTML=vQuick(b); return; }
   if(ui.view==='done')    { m.innerHTML=vDetail(b,true); return; }
   m.innerHTML=vStart();
 }
@@ -506,8 +533,8 @@ function vStart(){
   }
   const last=S.brews.filter(b=>b.status==='scored').slice(-1)[0];
   if(last){ const be=bean(last.beanId);
-    h+='<h3>Última cata</h3><div class="card" data-act="hist" data-id="'+last.id+'">'+
-       '<span class="num">'+brewTitle(last)+'</span> <span class="pill scored">catado</span>'+
+    h+='<h3>'+(isQuick(last)?'Última preparación':'Última cata')+'</h3><div class="card" data-act="hist" data-id="'+last.id+'">'+
+       '<span class="num">'+brewTitle(last)+'</span> <span class="pill '+(isQuick(last)?'':'scored')+'">'+estado(last)+'</span>'+
        '<div class="small">'+esc(be?be.name:(last.cafeTexto||''))+' · '+esc(last.date)+'</div></div>';
   }
   const sc=loadSync();
@@ -518,7 +545,8 @@ function vStart(){
   return h;
 }
 function brewTitle(b){ return b.kind==='externa'? ('Cata externa — '+(b.lugar||'¿?')) : ('Café '+b.coffeeNum); }
-function estado(b){ return {setup:'preparando',live:'en marcha',brewed:'sin catar',scored:'catado'}[b.status]||b.status; }
+function estado(b){ if(b.status==='scored') return isQuick(b)?'rápido':'catado';
+  return {setup:'preparando',live:'en marcha',brewed:'sin catar'}[b.status]||b.status; }
 
 function planRows(b){
   return b.plan.map((p,i)=>
@@ -601,6 +629,13 @@ function vSetupExt(b){
 }
 
 function doneIdx(b){ return b.events.filter(e=>e.actualT!=null).length; }
+/* Cierra la parte de preparación: agua real y bandera de cata a ciegas. */
+function closeBrew(){
+  const b=brew(ui.brewId); b.status='brewed';
+  const lastW=(b.events||[]).filter(e=>e.actualW!=null).slice(-1)[0]; if(lastW) b.water=lastW.actualW;
+  b.blind = scoredOf(b.beanId).filter(x=>x.id!==b.id).length>0 || !!(bean(b.beanId)||{}).bagNotes;
+  save(); return b;
+}
 function planOverview(b){
   let rows='';
   b.events.forEach((e,i)=>{
@@ -666,7 +701,8 @@ function vWeights(b){
   '<div class="row" style="margin-top:10px"><div class="grow"><label class="f">Fin de drawdown</label>'+
   '<input type="text" value="'+(b.drawdownT!=null?fmt(b.drawdownT):'')+'" data-bindtime="drawdownT" placeholder="m:ss"></div>'+
   '<div class="grow"><label class="f">Dosis real g</label><input type="number" inputmode="decimal" step="0.1" value="'+b.dose+'" data-bind="dose" data-num></div></div></div>'+
-  '<button class="btn primary block" data-act="toTaste" style="min-height:56px">Todo bien — a catar →</button>';
+  '<button class="btn primary block" data-act="toTaste" style="min-height:56px">Todo bien — a catar →</button>'+
+  '<button class="btn block" data-act="toQuick" style="margin-top:8px">Hoy no cato — guardar y listo</button>';
   return h;
 }
 
@@ -679,6 +715,8 @@ function vTaste(b){
   if(prev.length) hiders.push(prev.length+' radar'+(prev.length>1?'es':'')+' previo'+(prev.length>1?'s':'')+' de este grano');
   if(be && be.bagNotes) hiders.push('las notas de la bolsa');
   if(hiders.length) h+='<div class="blind">🙈 Cata a ciegas — '+hiders.join(' y ')+' quedan ocultos hasta guardar. Primero tu lectura.</div>';
+  h+='<div class="row" style="justify-content:center;margin-top:6px">'+
+     '<button class="btn ghost" data-act="quick">¿Sin tiempo? Guardar sin cata →</button></div>';
   h+='<h3>Tus palabras primero — en orden</h3><div class="card">';
   DESCS.forEach(d=>{
     h+='<label class="f">'+d[1]+'</label><textarea data-bind="desc.'+d[0]+'" rows="2" placeholder="'+esc(d[3])+'">'+esc(b.desc[d[0]])+'</textarea>';
@@ -692,6 +730,18 @@ function vTaste(b){
      '<div class="card" id="wheelcard">'+wheelChips(b)+'</div>';
   h+='<h3>Notas</h3><div class="card"><textarea data-bind="notes" rows="3" placeholder="Lo demás — fallos de proceso, estado del paladar, hipótesis…">'+esc(b.notes)+'</textarea></div>';
   h+='<button class="btn primary block" data-act="saveScores" style="min-height:56px">Guardar cata'+(hiders.length?' y revelar':'')+' →</button>';
+  return h;
+}
+function vQuick(b){
+  const be=bean(b.beanId);
+  let h='<h2>'+brewTitle(b)+' — guardar sin cata</h2>'+
+    '<div class="small">'+esc(be?be.name:(b.cafeTexto||'—'))+' · '+esc(b.date)+'</div>';
+  h+='<h3>Un comentario y ya</h3><div class="card">'+
+     '<textarea data-bind="notes" rows="4" placeholder="¿Qué tal salió? Una línea basta. Déjalo vacío si no hay nada que decir.">'+esc(b.notes)+'</textarea>'+
+     '<div class="muted">Se guardan los números de la preparación. Sin araña y sin descriptores.</div></div>';
+  h+='<button class="btn primary block" data-act="saveQuick" style="min-height:56px;margin-top:14px">Guardar y listo</button>';
+  h+='<button class="btn block" data-act="toTasteFull" style="margin-top:8px">Mejor sí la cato →</button>';
+  h+='<div class="muted" style="text-align:center;margin-top:8px">También puedes catarla más tarde desde el historial.</div>';
   return h;
 }
 function valChips(sc){
@@ -733,16 +783,20 @@ function vDetail(b, fresh){
    '<div class="small">'+esc(be?be.name:(b.cafeTexto||''))+(be&&be.roaster?' · '+esc(be.roaster):'')+' · '+esc(b.date)+
    (be&&be.roastDate?' · '+dpr(be.roastDate,b.date)+' d post-tueste':'')+'</div>';
   if(b.status==='scored'){
-    h+='<div class="card">'+radarSvg(series)+'<div class="legend">'+
-      series.map(s=>'<span><span class="sw" style="background:'+s.color+'"></span>'+esc(s.name)+'</span>').join('')+'</div>';
-    if(prev.length){
-      const pv=prev[prev.length-1];
-      h+='<h3 style="margin-top:6px">Δ vs '+brewTitle(pv)+'</h3><div class="deltas">'+AXES.map(ax=>{
-        const a=(b.scores||{})[ax[0]], c=(pv.scores||{})[ax[0]];
-        const d=(a!=null&&c!=null)?(a-c):null;
-        return '<div class="d">'+ax[1]+'<b>'+(d==null?'–':(d>0?'+':'')+d.toFixed(1).replace('.',','))+'</b></div>'; }).join('')+'</div>';
+    if(hasScores(b)){
+      h+='<div class="card">'+radarSvg(series)+'<div class="legend">'+
+        series.map(s=>'<span><span class="sw" style="background:'+s.color+'"></span>'+esc(s.name)+'</span>').join('')+'</div>';
+      if(prev.length){
+        const pv=prev[prev.length-1];
+        h+='<h3 style="margin-top:6px">Δ vs '+brewTitle(pv)+'</h3><div class="deltas">'+AXES.map(ax=>{
+          const a=(b.scores||{})[ax[0]], c=(pv.scores||{})[ax[0]];
+          const d=(a!=null&&c!=null)?(a-c):null;
+          return '<div class="d">'+ax[1]+'<b>'+(d==null?'–':(d>0?'+':'')+d.toFixed(1).replace('.',','))+'</b></div>'; }).join('')+'</div>';
+      }
+      h+='</div>';
+    } else if(isQuick(b)){
+      h+='<div class="card small">Preparación rápida — guardada sin araña ni descriptores.</div>';
     }
-    h+='</div>';
     if(b.prediction){ h+='<h3>Predicción</h3><div class="card"><div class="small"><b>Antes de preparar:</b> '+esc(b.prediction)+'</div>';
       if(ed) h+='<label class="f" style="margin-top:8px">¿Se cumplió?</label><textarea data-bind="predictionReview" rows="2" placeholder="Evalúa tu predicción…">'+esc(b.predictionReview||'')+'</textarea>';
       else if(b.predictionReview) h+='<div class="small" style="margin-top:6px"><b>Resultado:</b> '+esc(b.predictionReview)+'</div>';
@@ -752,7 +806,7 @@ function vDetail(b, fresh){
       else h+='<div class="small">'+esc(b.notes)+'</div>';
       h+='</div>'; }
     if(be && be.bagNotes) h+='<h3>La bolsa dice</h3><div class="card small">'+esc(be.bagNotes)+'</div>';
-    if(ed){
+    if(ed && !isQuick(b)){
       h+='<h3>Descriptores</h3><div class="card">';
       DESCS.forEach(d=>{
         h+='<label class="f">'+d[1]+'</label><textarea data-bind="desc.'+d[0]+'" rows="1" placeholder="'+esc(d[3])+'">'+esc((b.desc||{})[d[0]]||'')+'</textarea>';
@@ -827,23 +881,36 @@ function vDetail(b, fresh){
     h+='<div class="card small"><b>Método:</b> '+esc(b.method||'¿?')+(b.cafeTexto?' · <b>Café:</b> '+esc(b.cafeTexto):'')+'</div>';
   }
   if(b.status==='scored'){
+    if(isQuick(b) && !ui.editDetail)
+      h+='<button class="btn block" data-act="tasteNow" data-id="'+b.id+'" style="margin-top:12px">Catarla ahora</button>';
     if(!fresh && !ui.editDetail) h+='<button class="btn block" data-act="editDetail" style="margin-top:12px">Editar esta preparación</button>';
     if(ui.editDetail) h+='<button class="btn primary block" data-act="saveDetail" style="margin-top:12px">Listo</button>';
-    h+='<div class="row" style="margin-top:12px"><button class="btn primary grow" data-act="copyMd" data-id="'+b.id+'">📋 Copiar para Claude</button>'+
-       (navigator.share?'<button class="btn" data-act="shareMd" data-id="'+b.id+'">Compartir</button>':'')+'</div>'+
-       '<div class="muted" style="text-align:center;margin-top:6px" id="copymsg"></div>';
-    if(fresh){ const sc=loadSync();
-      h+='<div class="card" style="margin-top:14px;border-color:var(--warn)"><div class="small"><b>Recuerda sincronizar</b> para no perder esta cata.</div>';
-      if(sc.gistId) h+='<button class="btn primary block" data-act="syncPush" style="margin-top:8px">Sincronizar ahora</button>';
-      else h+='<button class="btn block" data-act="copyAll" style="margin-top:8px">Copiar datos (JSON)</button>';
-      h+='</div>';
+    if(!fresh){
+      h+='<div class="row" style="margin-top:12px"><button class="btn primary grow" data-act="copyMd" data-id="'+b.id+'">📋 Copiar para Claude</button>'+
+         (navigator.share?'<button class="btn" data-act="shareMd" data-id="'+b.id+'">Compartir</button>':'')+'</div>'+
+         '<div class="muted" style="text-align:center;margin-top:6px" id="copymsg"></div>';
     }
+    if(fresh) h+=syncCard();
   }
   h+='<div class="row" style="margin-top:14px">'+
      (fresh?'<button class="btn primary grow" data-act="home">Listo</button>'
            :'<button class="btn grow" data-act="backHist">← Historial</button>'+
             '<button class="btn danger" data-act="delBrew" data-id="'+b.id+'">Borrar</button>')+'</div>';
   return h;
+}
+
+/* Qué pasó con el envío automático a la nube, justo después de guardar. */
+function syncCard(){
+  const sc=loadSync();
+  if(ui.syncing) return '<p class="footer-note">Enviando a la nube…</p>';
+  if(!sc.token) return '<div class="card" style="margin-top:14px"><div class="small">'+
+    'Sin nube — los datos viven solo en este teléfono. Conéctala en <b>Historial</b>.</div>'+
+    '<button class="btn block" data-act="copyAll" style="margin-top:8px">Copiar datos (JSON)</button></div>';
+  if(ui.syncErr) return '<div class="card" style="margin-top:14px;border-color:var(--warn)">'+
+    '<div class="small"><b>Guardado en el teléfono.</b> La nube falló: '+esc(ui.syncErr)+'</div>'+
+    '<button class="btn primary block" data-act="syncPush" style="margin-top:8px">Reintentar envío</button>'+
+    '<div class="muted" style="margin-top:6px">También puedes reintentar más tarde desde Historial.</div></div>';
+  return '<p class="footer-note">Sincronizado con la nube ✓ · '+fmtDate(sc.lastPush)+'</p>';
 }
 
 function wbar(be){
@@ -957,14 +1024,48 @@ function vEquip(){
   return h;
 }
 
+function mesTxt(m){
+  if(!m) return 'Sin fecha';
+  const p=m.split('-');
+  return (MESES[(+p[1])-1]||m)+' '+p[0];
+}
+function histMatch(b,q){
+  if(!q) return true;
+  const be=bean(b.beanId)||{}, d=b.desc||{};
+  const hay=[brewTitle(b), estado(b), be.name, be.roaster, be.origin, be.variety, be.process,
+    b.cafeTexto, b.lugar, b.method, b.grindSetting, b.date, b.temp, b.notes, b.prediction,
+    (b.wheel||[]).join(' ')].concat(DESCS.map(x=>d[x[0]])).join(' ');
+  return norm(hay).includes(norm(q));
+}
+function histRow(b){
+  const be=bean(b.beanId);
+  return '<div class="card row" data-act="hist" data-id="'+b.id+'"><div class="grow">'+
+    '<span class="num">'+brewTitle(b)+'</span> <span class="pill '+(isQuick(b)?'':'scored')+'">'+estado(b)+'</span>'+
+    '<div class="small">'+esc(be?be.name:(b.cafeTexto||''))+' · '+esc(b.date)+
+    (b.grindSetting?' · molienda '+esc(b.grindSetting):'')+'</div></div><span class="muted">›</span></div>';
+}
+function histList(){
+  const q=(ui.histQ||'').trim();
+  const all=S.brews.slice().reverse().filter(b=>histMatch(b,q));
+  if(!all.length) return '<div class="card small">'+
+    (q? 'Nada coincide con «'+esc(q)+'».' : 'Aún no hay registros.')+'</div>';
+  const n=Math.min(ui.histN||HIST_PAGE, all.length);
+  let h='', mes=null;
+  all.slice(0,n).forEach(b=>{
+    const m=(b.date||'').slice(0,7);
+    if(m!==mes){ mes=m; h+='<div class="histmes">'+esc(mesTxt(m))+'</div>'; }
+    h+=histRow(b);
+  });
+  if(n<all.length) h+='<button class="btn block" data-act="histMore" style="margin-top:10px">'+
+    'Ver '+Math.min(HIST_PAGE,all.length-n)+' más — quedan '+(all.length-n)+'</button>';
+  else if(all.length>HIST_PAGE) h+='<div class="muted" style="text-align:center;margin-top:10px">'+
+    all.length+' registros · es el final.</div>';
+  return h;
+}
 function vHistory(){
   let h='<h2>Historial</h2>';
-  if(!S.brews.length) h+='<div class="card small">Aún no hay registros.</div>';
-  h+=S.brews.slice().reverse().map(b=>{ const be=bean(b.beanId);
-    return '<div class="card row" data-act="hist" data-id="'+b.id+'"><div class="grow">'+
-    '<span class="num">'+brewTitle(b)+'</span> <span class="pill '+(b.status==='scored'?'scored':'')+'">'+estado(b)+'</span>'+
-    '<div class="small">'+esc(be?be.name:(b.cafeTexto||''))+' · '+esc(b.date)+(b.grindSetting?' · molienda '+esc(b.grindSetting):'')+'</div></div><span class="muted">›</span></div>';
-  }).join('');
+  if(S.brews.length>8) h+='<input type="search" id="histQ" placeholder="Buscar grano, método, notas, 2026-08…" value="'+esc(ui.histQ||'')+'">';
+  h+='<div id="histlist" style="margin-top:10px">'+histList()+'</div>';
   h+=vSyncSection();
   return h;
 }
@@ -977,8 +1078,9 @@ function vSyncSection(){
       '<div class="row"><span class="small"><b>Nube conectada</b><span class="sync-dot ok"></span></span></div>'+
       '<div class="sync-status">Último envío: '+fmtDate(sc.lastPush)+'</div>'+
       (sc.lastPull?'<div class="sync-status">Última restauración: '+fmtDate(sc.lastPull)+'</div>':'')+
+      '<div class="muted">Cada vez que guardas una preparación, la app envía sola. Este botón es por si falló.</div>'+
       '<div class="row" style="margin-top:10px">'+
-        '<button class="btn primary grow" data-act="syncPush">Enviar a la nube</button>'+
+        '<button class="btn primary grow" data-act="syncPush">Enviar ahora</button>'+
         '<button class="btn" data-act="syncPull">Restaurar</button></div>'+
       '<button class="btn ghost danger" data-act="syncDisconnect" style="margin-top:8px">Desconectar nube</button>'+
       '</div>';
@@ -1037,11 +1139,16 @@ function mdFor(b){
     L.push('**Fin de drawdown**: '+fmt(b.drawdownT));
   }
   L.push('');
-  L.push('**Radar (0–1, pasos de 0,1'+(b.blind?', catado a ciegas — radares previos y notas de la bolsa ocultos hasta guardar':'')+')**: '+
-    AXES.map(ax=>ax[1].toLowerCase()+' '+((b.scores||{})[ax[0]]!=null?b.scores[ax[0]].toFixed(1):'–')).join(', '));
   const d=b.desc||{};
-  L.push('**Descriptores (palabras propias primero, en orden sensorial)** — '+
-    DESCS.map(x=>x[2].toLowerCase()+': '+(d[x[0]]||'—')).join(' · '));
+  if(hasScores(b)){
+    L.push('**Radar (0–1, pasos de 0,1'+(b.blind?', catado a ciegas — radares previos y notas de la bolsa ocultos hasta guardar':'')+')**: '+
+      AXES.map(ax=>ax[1].toLowerCase()+' '+((b.scores||{})[ax[0]]!=null?b.scores[ax[0]].toFixed(1):'–')).join(', '));
+  } else if(b.quick){
+    L.push('**Sin cata** — preparación rápida: se registraron los números, no la cata.');
+  }
+  if(DESCS.some(x=>d[x[0]]))
+    L.push('**Descriptores (palabras propias primero, en orden sensorial)** — '+
+      DESCS.map(x=>x[2].toLowerCase()+': '+(d[x[0]]||'—')).join(' · '));
   if((b.wheel||[]).length) L.push('**Rueda de sabores (elegidos después)**: '+b.wheel.join(', '));
   if(b.notes) L.push('**Notas**: '+b.notes);
   if(be.notes) L.push('**Notas del grano**: '+be.notes);
@@ -1102,8 +1209,9 @@ function stopInt(){ if(RT.int){ clearInterval(RT.int); RT.int=null; } }
 
 /* ---------- acciones ---------- */
 const acts={
-  tab(d){ ui.tab=d.tab; ui.histId=null; ui.beanEdit=null; ui.equipEdit=null; render(); },
-  home(){ ui.tab='brew'; ui.view=null; ui.brewId=null; ui.editDetail=false; render(); },
+  tab(d){ ui.tab=d.tab; ui.histId=null; ui.beanEdit=null; ui.equipEdit=null;
+    ui.histQ=''; ui.histN=HIST_PAGE; ui.syncErr=''; render(); },
+  home(){ ui.tab='brew'; ui.view=null; ui.brewId=null; ui.editDetail=false; ui.syncErr=''; render(); },
   newBrew(){
     const last=S.brews.filter(x=>x.kind!=='externa').slice(-1)[0];
     const lastBean=last?bean(last.beanId):null;
@@ -1167,23 +1275,30 @@ const acts={
     stopInt(); save(); ui.view='weights'; render(); },
   endEarly(){ const b=brew(ui.brewId); b.endedAt=Date.now(); if(b.startedAt&&b.drawdownT==null) b.drawdownT=elapsed(b);
     stopInt(); save(); ui.view='weights'; render(); },
-  toTaste(){ const b=brew(ui.brewId); b.status='brewed';
-    const lastW=b.events.filter(e=>e.actualW!=null).slice(-1)[0]; if(lastW) b.water=lastW.actualW;
-    b.blind = scoredOf(b.beanId).filter(x=>x.id!==b.id).length>0 || !!(bean(b.beanId)||{}).bagNotes;
-    save(); ui.view='taste'; render(); },
+  toTaste(){ closeBrew(); ui.view='taste'; render(); window.scrollTo(0,0); },
+  toQuick(){ closeBrew(); ui.view='quick'; render(); window.scrollTo(0,0); },
+  quick(){ ui.view='quick'; render(); window.scrollTo(0,0); },
+  toTasteFull(){ ui.view='taste'; render(); window.scrollTo(0,0); },
   wheel(d,elm){ const b=brew(ui.brewId||ui.histId); const t=d.t;
     const k=b.wheel.indexOf(t); if(k>=0) b.wheel.splice(k,1); else b.wheel.push(t);
     save(); elm.classList.toggle('on'); },
-  saveScores(){ const b=brew(ui.brewId); b.status='scored';
+  saveScores(){ const b=brew(ui.brewId); b.status='scored'; b.quick=false;
     if(b.kind!=='externa') S.nextNum=Math.max(S.nextNum, (+b.coffeeNum||0)+1);
-    save(); ui.view='done'; render(); window.scrollTo(0,0); },
+    save(); ui.view='done'; ui.syncErr=''; render(); window.scrollTo(0,0); autoPush(); },
+  saveQuick(){ const b=brew(ui.brewId); b.status='scored'; b.quick=looksQuick(b);
+    if(b.kind!=='externa') S.nextNum=Math.max(S.nextNum, (+b.coffeeNum||0)+1);
+    save(); ui.view='done'; ui.syncErr=''; render(); window.scrollTo(0,0); autoPush(); },
+  tasteNow(d){ const b=brew(d.id); ui.tab='brew'; ui.brewId=b.id; ui.histId=null;
+    ui.editDetail=false; ui.view='taste'; render(); window.scrollTo(0,0); },
   copyMd(d){ copyText(mdFor(brew(d.id)), document.getElementById('copymsg')); },
   shareMd(d){ const b=brew(d.id);
     try{ navigator.share({title:brewTitle(b), text:mdFor(b)}); }catch(e){} },
-  hist(d){ ui.tab='history'; ui.histId=d.id; ui.editDetail=false; render(); window.scrollTo(0,0); },
+  hist(d){ ui.tab='history'; ui.histId=d.id; ui.editDetail=false; ui.syncErr=''; render(); window.scrollTo(0,0); },
   backHist(){ ui.histId=null; ui.editDetail=false; render(); },
+  histMore(){ ui.histN=(ui.histN||HIST_PAGE)+HIST_PAGE;
+    const el=document.getElementById('histlist'); if(el) el.innerHTML=histList(); else render(); },
   editDetail(){ ui.editDetail=true; render(); window.scrollTo(0,0); },
-  saveDetail(){ ui.editDetail=false; save(); render(); window.scrollTo(0,0); },
+  saveDetail(){ ui.editDetail=false; save(); render(); window.scrollTo(0,0); autoPush(); },
   delBrew(d,elm){ if(!armed(elm)) return;
     S.brews=S.brews.filter(x=>x.id!==d.id); save(); ui.histId=null; render(); toast('Registro borrado'); },
   beanNew(){ ui.beanEdit={id:null,name:'',roaster:'',producer:'',origin:'',altitude:'',variety:'',process:'',roastDate:'',
@@ -1263,6 +1378,8 @@ function setPath(obj, path, val){
 const r1=x=>Math.round(x*10)/10, r2=x=>Math.round(x*100)/100;
 document.addEventListener('input',ev=>{
   const t=ev.target;
+  if(t.id==='histQ'){ ui.histQ=t.value; ui.histN=HIST_PAGE;
+    const el=document.getElementById('histlist'); if(el) el.innerHTML=histList(); return; }
   if(t.dataset.bbool && ui.beanEdit){ ui.beanEdit[t.dataset.bbool]=t.checked; return; }
   if(t.dataset.bbind && ui.beanEdit){
     let v=t.value;
@@ -1294,7 +1411,7 @@ document.addEventListener('change',ev=>{
 });
 
 /* ---------- service worker ---------- */
-const APP_VERSION='v5.1';
+const APP_VERSION='v5.2';
 let swWaiting=null;
 function updateApp(){
   if(swWaiting){ swWaiting.postMessage({type:'SKIP_WAITING'}); }

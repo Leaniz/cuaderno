@@ -44,6 +44,8 @@ If you forget to bump the SW cache, users won't get the update until the browser
 
 Cloud backup uses GitHub Gist API. The app stores a personal access token (Gist-scoped) and a Gist ID in `cuaderno-sync` localStorage key. On connect, it searches for an existing "Cuaderno" Gist before creating a new one.
 
+Saving a brew (`saveScores`, `saveQuick`, `saveDetail`) fires `autoPush()`, which pushes to the Gist in the background. It's a no-op when no token is stored. `syncPush(true)` is the auto variant: it records the failure in `ui.syncErr` so the just-saved screen can offer a retry instead of silently losing the push. Push still overwrites — it never merges.
+
 ## Owner
 
 Javier — uses this daily for V60/AeroPress brews. The app is also maintained from the `/Users/javier/Documents/Cafe` knowledge base repo where the original artifact version lives at `output/tools/cuaderno-brew-app.html`. This repo is the production version.
