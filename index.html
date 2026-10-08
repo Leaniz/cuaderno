@@ -903,6 +903,8 @@ function vDetail(b, fresh){
 function syncCard(){
   const sc=loadSync();
   if(ui.syncing) return '<p class="footer-note">Enviando a la nube…</p>';
+  if(!sc.token && sc.gistId) return '<div class="card" style="margin-top:14px;border-color:var(--warn)"><div class="small">'+
+    '<b>Guardado en el teléfono.</b> La nube necesita un token nuevo — ponlo en <b>Historial</b>.</div></div>';
   if(!sc.token) return '<div class="card" style="margin-top:14px"><div class="small">'+
     'Sin nube — los datos viven solo en este teléfono. Conéctala en <b>Historial</b>.</div>'+
     '<button class="btn block" data-act="copyAll" style="margin-top:8px">Copiar datos (JSON)</button></div>';
@@ -1073,7 +1075,19 @@ function vHistory(){
 function vSyncSection(){
   const sc=loadSync();
   let h='<h3 style="margin-top:24px">Sincronización y copia de seguridad</h3>';
-  if(sc.gistId){
+  if(sc.gistId && !sc.token){
+    /* El token caducó o GitHub lo rechazó: la app lo borró pero recuerda el Gist. */
+    h+='<div class="card" style="border-color:var(--warn)">'+
+      '<div class="small"><b>La nube necesita un token nuevo.</b> GitHub rechazó el anterior (caducado o revocado). '+
+      'Tus preparaciones siguen en este teléfono.</div>'+
+      '<div class="sync-status">Último envío: '+fmtDate(sc.lastPush)+'</div>'+
+      '<label class="f" style="margin-top:10px">Token nuevo de GitHub</label>'+
+      '<input type="password" id="syncToken" class="token-field" placeholder="github_pat_... o ghp_...">'+
+      '<div class="muted" style="margin-top:4px">github.com → Settings → Developer Settings → Fine-grained tokens → regenerar «Cuaderno», o uno nuevo con solo permiso de Gists.</div>'+
+      '<button class="btn primary block" data-act="syncConnect" style="margin-top:10px">Reconectar y enviar</button>'+
+      '<button class="btn ghost danger" data-act="syncDisconnect" style="margin-top:8px">Desconectar nube</button>'+
+      '</div>';
+  } else if(sc.gistId){
     h+='<div class="card">'+
       '<div class="row"><span class="small"><b>Nube conectada</b><span class="sync-dot ok"></span></span></div>'+
       '<div class="sync-status">Último envío: '+fmtDate(sc.lastPush)+'</div>'+
@@ -1339,6 +1353,14 @@ const acts={
     toast('Validando token…');
     const ok=await syncValidateToken(token);
     if(!ok){ toast('Token inválido — revisa permisos y fecha.'); return; }
+    const old=loadSync();
+    /* Reconexión tras un token caducado: mismo Gist, y este teléfono tiene lo
+       más nuevo, así que se envía enseguida. */
+    if(old.gistId){
+      saveSync(Object.assign({}, old, {token}));
+      await syncPush();
+      return;
+    }
     toast('Buscando datos en la nube…');
     const sc={token};
     try{
@@ -1411,7 +1433,7 @@ document.addEventListener('change',ev=>{
 });
 
 /* ---------- service worker ---------- */
-const APP_VERSION='v5.2';
+const APP_VERSION='v5.3';
 let swWaiting=null;
 function updateApp(){
   if(swWaiting){ swWaiting.postMessage({type:'SKIP_WAITING'}); }
